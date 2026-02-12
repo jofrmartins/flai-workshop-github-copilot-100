@@ -274,3 +274,95 @@ class TestEdgeCases:
             params={"email": "not-an-email"}
         )
         assert response.status_code == 200
+
+
+class TestCapacityValidation:
+    """Tests for activity capacity limits"""
+    
+    def test_signup_when_activity_full(self, client):
+        """Test that signup fails when activity is at max capacity"""
+        # Chess Club has max 12, currently has 2 participants
+        # Fill it up
+        for i in range(10):
+            response = client.post(
+                "/activities/Chess Club/signup",
+                params={"email": f"student{i}@mergington.edu"}
+            )
+            assert response.status_code == 200
+        
+        # Try to add one more (should fail)
+        response = client.post(
+            "/activities/Chess Club/signup",
+            params={"email": "overflow@mergington.edu"}
+        )
+        assert response.status_code == 400
+        assert "full" in response.json()["detail"].lower()
+    
+    def test_unregister_frees_spot(self, client):
+        """Test that unregistering from a full activity frees up a spot"""
+        # Fill Chess Club (max 12, has 2)
+        for i in range(10):
+            client.post(
+                "/activities/Chess Club/signup",
+                params={"email": f"student{i}@mergington.edu"}
+            )
+        
+        # Should be full now
+        response = client.post(
+            "/activities/Chess Club/signup",
+            params={"email": "blocked@mergington.edu"}
+        )
+        assert response.status_code == 400
+        
+        # Unregister someone
+        client.delete(
+            "/activities/Chess Club/unregister",
+            params={"email": "student0@mergington.edu"}
+        )
+        
+        # Now signup should work
+        response = client.post(
+            "/activities/Chess Club/signup",
+            params={"email": "blocked@mergington.edu"}
+        )
+        assert response.status_code == 200
+    
+    def test_large_capacity_activity(self, client):
+        """Test signing up for activity with larger capacity"""
+        # Gym Class has max 30, currently has 2 participants
+        # Add several students
+        for i in range(5):
+            response = client.post(
+                "/activities/Gym Class/signup",
+                params={"email": f"athlete{i}@mergington.edu"}
+            )
+            assert response.status_code == 200
+        
+        # Verify all were added
+        activities_response = client.get("/activities")
+        activities_data = activities_response.json()
+        assert len(activities_data["Gym Class"]["participants"]) == 7  # 2 original + 5 new
+    
+    def test_exact_capacity_boundary(self, client):
+        """Test that exactly max_participants can sign up"""
+        # Basketball Club has max 15, currently has 2
+        # Add exactly 13 more to reach capacity
+        for i in range(13):
+            response = client.post(
+                "/activities/Basketball Club/signup",
+                params={"email": f"player{i}@mergington.edu"}
+            )
+            assert response.status_code == 200
+        
+        # Verify we're at exactly max capacity
+        activities_response = client.get("/activities")
+        activities_data = activities_response.json()
+        basketball = activities_data["Basketball Club"]
+        assert len(basketball["participants"]) == basketball["max_participants"]
+        
+        # One more should fail
+        response = client.post(
+            "/activities/Basketball Club/signup",
+            params={"email": "toolate@mergington.edu"}
+        )
+        assert response.status_code == 400
